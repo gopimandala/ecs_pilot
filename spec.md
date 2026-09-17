@@ -1,10 +1,20 @@
 # Terraform Specification — AWS ECS/Fargate
 
-## setup
-update main.tf to create ecr repos:
-gopi/main-api
-gopi/uc1
-gopi/uc2 
+##  Testing Exceptions
+1. update uc1 as follows:
+- it iterates 5 times.
+- receives delay_s (int) (it sleeps for that many seconds in each iteration). if value is > 20s, set it to 20s.
+- in each iteration it prints a log msg including iteration count, 'before it sleeps'
+- in the end, it prints 'job completed successfully'.
+Ensure outputs are unbuffered so they immediately hit CloudWatch.
+
+2. Create an AWS Step Functions Standard State Machine using the aws_sfn_state_machine resource.
+Requirements:
+A. The workflow should start an ECS Task using the synchronous runTask.sync pattern.
+B. Add a Retry block for 'ECS.AmazonECSException' or container failures, with a max_attempts of 2.
+C. Add a Catch block that routes the execution payload to an SQS Dead Letter Queue (DLQ) if all retries fail.
+D. Update my EventBridge Pipe to target this Step Function instead of targeting ECS directly.
+E. Set time out of 30s. If it takes longer than this, the task must be killed and retry attempted if not exceeded the retry limits.
 
 ## Change
 1. Create SQS

@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import boto3
 import os
+from urllib.parse import parse_qs, urlparse
 
 # Initialize AWS clients
 # AWS automatically injects credentials into the container via IAM Task Roles.
@@ -13,10 +14,13 @@ UC2_SQS_QUEUE_URL = os.getenv("UC2_SQS_QUEUE_URL")
 
 class MainApiHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/usecase1':
+        parsed_path = urlparse(self.path)
+        query = parse_qs(parsed_path.query)
+
+        if parsed_path.path == '/usecase1':
             worker_name = "uc1"
             queue_url = UC1_SQS_QUEUE_URL
-        elif self.path == '/usecase2':
+        elif parsed_path.path == '/usecase2':
             worker_name = "uc2"
             queue_url = UC2_SQS_QUEUE_URL
         else:
@@ -33,7 +37,8 @@ class MainApiHandler(BaseHTTPRequestHandler):
 
         try:
             message = {
-                "usecase": worker_name
+                "usecase": worker_name,
+                "delay_s": int(query.get("delay_s", [0])[0])
             }
 
             response = sqs_client.send_message(
@@ -43,6 +48,10 @@ class MainApiHandler(BaseHTTPRequestHandler):
                     "usecase": {
                         "StringValue": worker_name,
                         "DataType": "String"
+                    },
+                    "delay_s": {
+                        "StringValue": str(message["delay_s"]),
+                        "DataType": "Number"
                     }
                 }
             )

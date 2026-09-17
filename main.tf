@@ -31,10 +31,7 @@ data "aws_subnets" "default" {
 }
 
 # ============================================================
-# EXISTING ECR IMAGES
-#
-# ECR is ALREADY SET UP.
-# Terraform does not create or modify ECR.
+# ECR IMAGES
 # ============================================================
 
 locals {
@@ -49,6 +46,11 @@ locals {
 
 resource "aws_cloudwatch_log_group" "ecs" {
   name              = "/ecs/gopi-logs"
+  retention_in_days = 1
+}
+
+resource "aws_cloudwatch_log_group" "pipes" {
+  name              = "/aws/vendedlogs-pipes/gopi"
   retention_in_days = 1
 }
 
@@ -68,6 +70,10 @@ resource "aws_sqs_queue" "uc2_requests" {
   visibility_timeout_seconds = 30
   message_retention_seconds  = 1209600
   receive_wait_time_seconds  = 10
+}
+
+resource "aws_sqs_queue" "workflow_dlq" {
+  name = "gopi-workflow-dlq"
 }
 
 # ============================================================
@@ -236,7 +242,9 @@ resource "aws_iam_policy" "eventbridge_pipe" {
         Action = [
           "sqs:ReceiveMessage",
           "sqs:DeleteMessage",
-          "sqs:GetQueueAttributes"
+          "sqs:GetQueueAttributes",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
         ]
 
         Resource = [
@@ -246,26 +254,31 @@ resource "aws_iam_policy" "eventbridge_pipe" {
       },
       {
         Effect = "Allow"
-
         Action = [
-          "ecs:RunTask"
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
         ]
-
+        Resource = "${aws_cloudwatch_log_group.pipes.arn}:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "states:StartExecution",
+        ]
         Resource = [
-          aws_ecs_task_definition.uc1.arn,
-          aws_ecs_task_definition.uc2.arn
+          aws_sfn_state_machine.uc1.arn,
+          aws_sfn_state_machine.uc2.arn
         ]
       },
       {
         Effect = "Allow"
-
         Action = [
-          "iam:PassRole"
+          "states:DescribeExecution",
+          "states:StopExecution"
         ]
-
         Resource = [
-          aws_iam_role.ecs_execution.arn,
-          aws_iam_role.ecs_task.arn
+          "${replace(aws_sfn_state_machine.uc1.arn, ":stateMachine:", ":execution:")}:*",
+          "${replace(aws_sfn_state_machine.uc2.arn, ":stateMachine:", ":execution:")}:*"
         ]
       }
     ]
@@ -275,6 +288,188 @@ resource "aws_iam_policy" "eventbridge_pipe" {
 resource "aws_iam_role_policy_attachment" "eventbridge_pipe" {
   role       = aws_iam_role.eventbridge_pipe.name
   policy_arn = aws_iam_policy.eventbridge_pipe.arn
+}
+
+# ============================================================
+# STEP FUNCTIONS ROLE AND WORKFLOW
+# ============================================================
+
+resource "aws_iam_role" "step_functions" {
+  name = "gopi-step-functions-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "states.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_policy" "step_functions" {
+  name = "gopi-step-functions-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecs:RunTask",
+          "ecs:DescribeTasks",
+          "ecs:StopTask"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = [
+          aws_iam_role.ecs_execution.arn,
+          aws_iam_role.ecs_task.arn
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = "sqs:SendMessage"
+        Resource = aws_sqs_queue.workflow_dlq.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "events:PutRule",
+          "events:PutTargets",
+          "events:DescribeRule",
+          "events:RemoveTargets",
+          "events:DeleteRule"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "step_functions" {
+  role       = aws_iam_role.step_functions.name
+  policy_arn = aws_iam_policy.step_functions.arn
+}
+
+resource "aws_sfn_state_machine" "uc1" {
+  name     = "gopi-uc1-workflow"
+  role_arn = aws_iam_role.step_functions.arn
+  type     = "STANDARD"
+
+  definition = jsonencode({
+    StartAt = "RunUC1"
+    States = {
+      RunUC1 = {
+        Type           = "Task"
+        Resource       = "arn:aws:states:::ecs:runTask.sync"
+        TimeoutSeconds = 30
+        Parameters = {
+          Cluster        = aws_ecs_cluster.gopi_cluster.arn
+          TaskDefinition = aws_ecs_task_definition.uc1.arn
+          LaunchType     = "FARGATE"
+          NetworkConfiguration = {
+            AwsvpcConfiguration = {
+              Subnets        = [data.aws_subnets.default.ids[0]]
+              SecurityGroups = [aws_security_group.ecs_sg.id]
+              AssignPublicIp = "ENABLED"
+            }
+          }
+          Overrides = {
+            ContainerOverrides = [{
+              Name    = "worker"
+              Command = ["python", "-u", "uc1.py"]
+              Environment = [{
+                Name      = "DELAY_S"
+                "Value.$" = "States.Format('{}', $[0].delay_s)"
+              }]
+            }]
+          }
+        }
+        Retry = [{
+          ErrorEquals = [
+            "ECS.AmazonECSException",
+            "ECS.AmazonECSUnknownException",
+            "States.Timeout",
+            "States.TaskFailed"
+          ]
+          MaxAttempts     = 2
+          IntervalSeconds = 1
+        }]
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          ResultPath  = "$[0].error"
+          Next        = "SendToDLQ"
+        }]
+        End = true
+      }
+      SendToDLQ = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:sqs:sendMessage"
+        Parameters = {
+          QueueUrl        = aws_sqs_queue.workflow_dlq.url
+          "MessageBody.$" = "States.JsonToString($)"
+        }
+        End = true
+      }
+    }
+  })
+
+  depends_on = [aws_iam_role_policy_attachment.step_functions]
+}
+
+resource "aws_sfn_state_machine" "uc2" {
+  name     = "gopi-uc2-workflow"
+  role_arn = aws_iam_role.step_functions.arn
+  type     = "STANDARD"
+
+  definition = jsonencode({
+    StartAt = "RunUC2"
+    States = {
+      RunUC2 = {
+        Type           = "Task"
+        Resource       = "arn:aws:states:::ecs:runTask.sync"
+        TimeoutSeconds = 30
+        Parameters = {
+          Cluster        = aws_ecs_cluster.gopi_cluster.arn
+          TaskDefinition = aws_ecs_task_definition.uc2.arn
+          LaunchType     = "FARGATE"
+          NetworkConfiguration = {
+            AwsvpcConfiguration = {
+              Subnets        = [data.aws_subnets.default.ids[0]]
+              SecurityGroups = [aws_security_group.ecs_sg.id]
+              AssignPublicIp = "ENABLED"
+            }
+          }
+        }
+        Retry = [{
+          ErrorEquals     = ["ECS.AmazonECSException", "ECS.AmazonECSUnknownException", "States.Timeout", "States.TaskFailed"]
+          MaxAttempts     = 2
+          IntervalSeconds = 1
+        }]
+        Catch = [{
+          ErrorEquals = ["States.ALL"]
+          ResultPath  = "$.error"
+          Next        = "SendToDLQ"
+        }]
+        End = true
+      }
+      SendToDLQ = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:sqs:sendMessage"
+        Parameters = {
+          QueueUrl        = aws_sqs_queue.workflow_dlq.url
+          "MessageBody.$" = "States.JsonToString($)"
+        }
+        End = true
+      }
+    }
+  })
+
+  depends_on = [aws_iam_role_policy_attachment.step_functions]
 }
 
 # ============================================================
@@ -467,7 +662,16 @@ resource "aws_pipes_pipe" "uc1" {
   name     = "gopi-uc1-pipe"
   role_arn = aws_iam_role.eventbridge_pipe.arn
   source   = aws_sqs_queue.uc1_requests.arn
-  target   = aws_ecs_cluster.gopi_cluster.arn
+  target   = aws_sfn_state_machine.uc1.arn
+
+  log_configuration {
+    level                  = "ERROR"
+    include_execution_data = ["ALL"]
+
+    cloudwatch_logs_log_destination {
+      log_group_arn = aws_cloudwatch_log_group.pipes.arn
+    }
+  }
 
   source_parameters {
     sqs_queue_parameters {
@@ -476,19 +680,10 @@ resource "aws_pipes_pipe" "uc1" {
   }
 
   target_parameters {
-    ecs_task_parameters {
-      task_definition_arn = aws_ecs_task_definition.uc1.arn
-      launch_type         = "FARGATE"
-      task_count          = 1
-      platform_version    = "LATEST"
+    input_template = "{\"delay_s\": \"<$.messageAttributes.delay_s.stringValue>\"}"
 
-      network_configuration {
-        aws_vpc_configuration {
-          subnets          = [data.aws_subnets.default.ids[0]]
-          security_groups  = [aws_security_group.ecs_sg.id]
-          assign_public_ip = "ENABLED"
-        }
-      }
+    step_function_state_machine_parameters {
+      invocation_type = "FIRE_AND_FORGET"
     }
   }
 
@@ -501,7 +696,16 @@ resource "aws_pipes_pipe" "uc2" {
   name     = "gopi-uc2-pipe"
   role_arn = aws_iam_role.eventbridge_pipe.arn
   source   = aws_sqs_queue.uc2_requests.arn
-  target   = aws_ecs_cluster.gopi_cluster.arn
+  target   = aws_sfn_state_machine.uc2.arn
+
+  log_configuration {
+    level                  = "ERROR"
+    include_execution_data = ["ALL"]
+
+    cloudwatch_logs_log_destination {
+      log_group_arn = aws_cloudwatch_log_group.pipes.arn
+    }
+  }
 
   source_parameters {
     sqs_queue_parameters {
@@ -510,19 +714,10 @@ resource "aws_pipes_pipe" "uc2" {
   }
 
   target_parameters {
-    ecs_task_parameters {
-      task_definition_arn = aws_ecs_task_definition.uc2.arn
-      launch_type         = "FARGATE"
-      task_count          = 1
-      platform_version    = "LATEST"
+    input_template = "{\"delay_s\": \"<$.messageAttributes.delay_s.stringValue>\"}"
 
-      network_configuration {
-        aws_vpc_configuration {
-          subnets          = [data.aws_subnets.default.ids[0]]
-          security_groups  = [aws_security_group.ecs_sg.id]
-          assign_public_ip = "ENABLED"
-        }
-      }
+    step_function_state_machine_parameters {
+      invocation_type = "FIRE_AND_FORGET"
     }
   }
 
