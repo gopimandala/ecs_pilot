@@ -1,0 +1,6 @@
+.git
+.terraform
+.venv
+__pycache__
+uv.lock
+pyproject.toml
