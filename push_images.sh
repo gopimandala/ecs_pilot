@@ -7,8 +7,8 @@ AWS_REGISTRY="224350923820.dkr.ecr.${AWS_REGION}.amazonaws.com"
 IMAGE_TAG="latest"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-TARGETS=("uc1" "uc2" "main_api")
-REPO_NAMES=("gopi/uc1" "gopi/uc2" "gopi/main-api")
+TARGETS=("uc1" "uc2" "main_api" "monitor")
+REPO_NAMES=("gopi/uc1" "gopi/uc2" "gopi/main-api" "gopi/monitor")
 
 for command_name in aws docker; do
     if ! command -v "$command_name" >/dev/null 2>&1; then

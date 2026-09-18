@@ -21,3 +21,10 @@ EXPOSE 8080
 EXPOSE 8000
 CMD ["python", "-u", "main_api.py"]
 
+# --- Image 4: monitor ---
+FROM python:3.11-slim AS monitor
+WORKDIR /app
+RUN pip install --no-cache-dir boto3
+COPY monitor.py .
+CMD ["python", "-u", "monitor.py"]
+

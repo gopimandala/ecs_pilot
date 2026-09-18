@@ -8,13 +8,15 @@
 - in the end, it prints 'job completed successfully'.
 Ensure outputs are unbuffered so they immediately hit CloudWatch.
 
-2. Create an AWS Step Functions Standard State Machine using the aws_sfn_state_machine resource.
-Requirements:
-A. The workflow should start an ECS Task using the synchronous runTask.sync pattern.
-B. Add a Retry block for 'ECS.AmazonECSException' or container failures, with a max_attempts of 2.
-C. Add a Catch block that routes the execution payload to an SQS Dead Letter Queue (DLQ) if all retries fail.
-D. Update my EventBridge Pipe to target this Step Function instead of targeting ECS directly.
-E. Set time out of 30s. If it takes longer than this, the task must be killed and retry attempted if not exceeded the retry limits.
+2. Lean Monitor services
+- remove step functions, pipe and related code
+- setup ecs monitor service, 1 per usecase, with .25 vcpu + lowest ram
+- set max tasks as 2 for uc1 and 1 for uc2
+- monitor services poll their usecase sqs every 10s
+  - triggers ecs task if slots avail
+  - if task completed, pick the next one in queue
+  - if task fails, retry based on max retries and push to dlq if exceeded
+  - max retries = 1 for uc1, uc2 (i.e., 1 original attempt + 1 retry)
 
 ## Change
 1. Create SQS
