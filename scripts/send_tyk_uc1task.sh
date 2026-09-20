@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 CALLS=1
-DELAY_S=30
+DELAY_S=2
 
 # Route directly through your local Tyk Gateway running on port 8080
 API_URL="http://localhost:8080/usecase1?delay_s=${DELAY_S}"

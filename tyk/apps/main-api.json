@@ -6,7 +6,7 @@
   "active": true,
   "proxy": {
     "listen_path": "/",
-    "target_url": "http://13.233.101.1:8000",
+    "target_url": "http://13.203.201.63:8000",
     "strip_listen_path": false
   },
   "version_data": {

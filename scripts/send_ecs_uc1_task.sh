@@ -5,8 +5,8 @@ set -Eeuo pipefail
 AWS_REGION="ap-south-1"
 CLUSTER="gopi-cluster"
 SERVICE="main-api-service"
-CALLS=3
-DELAY_S=2
+CALLS=1
+DELAY_S=32
 
 TASK_ARN=$(aws ecs list-tasks \
     --cluster "$CLUSTER" \

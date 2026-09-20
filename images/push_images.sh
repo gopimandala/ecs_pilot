@@ -7,7 +7,7 @@ AWS_REGISTRY="224350923820.dkr.ecr.${AWS_REGION}.amazonaws.com"
 UC1_IMAGE_TAG="1.2.1"
 UC2_IMAGE_TAG="1.2.1"
 MAIN_API_IMAGE_TAG="1.1.0"
-MONITOR_IMAGE_TAG="1.2.0"
+MONITOR_IMAGE_TAG="1.2.1"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGETS=("uc1" "uc2" "main_api" "monitor")

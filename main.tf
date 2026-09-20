@@ -26,7 +26,7 @@ locals {
   uc1_image_tag      = "1.2.1"
   uc2_image_tag      = "1.2.1"
   main_api_image_tag = "1.1.0"
-  monitor_image_tag  = "1.1.4"
+  monitor_image_tag  = "1.2.1"
   main_api_image     = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/main-api:${local.main_api_image_tag}"
   uc1_image          = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc1:${local.uc1_image_tag}"
   uc2_image          = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc2:${local.uc2_image_tag}"
@@ -43,6 +43,10 @@ resource "aws_sqs_queue" "uc1_requests" {
   visibility_timeout_seconds = 300
   message_retention_seconds  = 1209600
   receive_wait_time_seconds  = 20
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.usecase_dlq.arn
+    maxReceiveCount     = 2  # This enforces: 1 Original Try + 1 Retry Max
+  })
 }
 
 resource "aws_sqs_queue" "uc2_requests" {

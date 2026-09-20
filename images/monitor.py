@@ -126,16 +126,19 @@ def finish_message(message, succeeded):
 
     receive_count = int(message.get("Attributes", {}).get("ApproximateReceiveCount", "1"))
     if receive_count >= MAX_ATTEMPTS:
-        sqs.send_message(QueueUrl=DLQ_URL, MessageBody=message["Body"])
-        sqs.delete_message(QueueUrl=QUEUE_URL, ReceiptHandle=message["ReceiptHandle"])
+        # DO NOT send to DLQ manually anymore!
+        # Just update DynamoDB and leave the message alone. 
+        # AWS SQS will automatically move it to the DLQ with the ORIGINAL ID.
         update_message_status(message, "failed_dlq")
     else:
+        # First failure: reset visibility to 0 so it retries immediately
         sqs.change_message_visibility(
             QueueUrl=QUEUE_URL,
             ReceiptHandle=message["ReceiptHandle"],
             VisibilityTimeout=0,
         )
         release_message(message)
+
 
 
 def stop_timed_out_task(task_arn, task_state):
