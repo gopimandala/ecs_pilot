@@ -4,11 +4,15 @@ set -Eeuo pipefail
 
 AWS_REGION="ap-south-1"
 AWS_REGISTRY="224350923820.dkr.ecr.${AWS_REGION}.amazonaws.com"
-IMAGE_TAG="latest"
+UC1_IMAGE_TAG="1.2.1"
+UC2_IMAGE_TAG="1.2.1"
+MAIN_API_IMAGE_TAG="1.1.0"
+MONITOR_IMAGE_TAG="1.2.0"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGETS=("uc1" "uc2" "main_api" "monitor")
 REPO_NAMES=("gopi/uc1" "gopi/uc2" "gopi/main-api" "gopi/monitor")
+IMAGE_TAGS=("$UC1_IMAGE_TAG" "$UC2_IMAGE_TAG" "$MAIN_API_IMAGE_TAG" "$MONITOR_IMAGE_TAG")
 
 for command_name in aws docker; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -37,7 +41,8 @@ done
 for i in "${!TARGETS[@]}"; do
     target="${TARGETS[$i]}"
     repo_name="${REPO_NAMES[$i]}"
-    ecr_image="${AWS_REGISTRY}/${repo_name}:${IMAGE_TAG}"
+    image_tag="${IMAGE_TAGS[$i]}"
+    ecr_image="${AWS_REGISTRY}/${repo_name}:${image_tag}"
 
     echo "Building Docker target ${target} as ${ecr_image}..."
     docker build \

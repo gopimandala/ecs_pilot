@@ -1,0 +1,20 @@
+{
+  "api_id": "gopi-main-api",
+  "name": "Gopi Main API",
+  "org_id": "gopi",
+  "use_keyless": true,
+  "active": true,
+  "proxy": {
+    "listen_path": "/",
+    "target_url": "http://13.233.101.1:8000",
+    "strip_listen_path": false
+  },
+  "version_data": {
+    "not_versioned": true,
+    "versions": {
+      "Default": {
+        "name": "Default"
+      }
+    }
+  }
+}

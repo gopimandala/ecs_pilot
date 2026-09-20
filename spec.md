@@ -1,5 +1,9 @@
 # Terraform Specification — AWS ECS/Fargate
 
+## Tyk
+1. Setup Tyk locally, no lic should be needed
+- configure tyk to point to main api
+
 ##  Testing Exceptions
 1. update uc1 as follows:
 - it iterates 5 times.

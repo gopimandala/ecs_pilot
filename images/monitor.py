@@ -1,9 +1,7 @@
 import json
 import os
 import time
-
 import boto3
-
 
 REGION = os.getenv("AWS_REGION", "ap-south-1")
 QUEUE_URL = os.environ["QUEUE_URL"]
@@ -13,6 +11,7 @@ TASK_DEFINITION = os.environ["TASK_DEFINITION"]
 WORKER_CONTAINER = os.getenv("WORKER_CONTAINER", "worker")
 MAX_TASKS = int(os.getenv("MAX_TASKS", "1"))
 MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", "2"))
+TASK_TIMEOUT_SECONDS = int(os.getenv("TASK_TIMEOUT_SECONDS", "30"))
 SUBNET_ID = os.environ["SUBNET_ID"]
 SECURITY_GROUP_ID = os.environ["SECURITY_GROUP_ID"]
 DEDUP_TABLE = os.environ["DEDUP_TABLE"]
@@ -45,7 +44,7 @@ def start_task(message):
     response = ecs.run_task(
         cluster=CLUSTER,
         taskDefinition=TASK_DEFINITION,
-        clientToken=message["MessageId"],
+        clientToken=f"{message['MessageId']}-{time.time_ns()}",
         launchType="FARGATE",
         networkConfiguration={
             "awsvpcConfiguration": {
@@ -107,7 +106,16 @@ def update_message_status(message, status):
 
 def task_succeeded(task):
     containers = task.get("containers", [])
-    return bool(containers) and all(container.get("exitCode") == 0 for container in containers)
+    if not containers:
+        return False
+    if any("exitCode" not in container or container["exitCode"] is None for container in containers):
+        return False
+    return all(container["exitCode"] == 0 for container in containers)
+
+
+def task_timed_out(task_state):
+    # Absolute wall-clock metric check
+    return time.time() >= task_state["deadline"]
 
 
 def finish_message(message, succeeded):
@@ -130,53 +138,113 @@ def finish_message(message, succeeded):
         release_message(message)
 
 
+def stop_timed_out_task(task_arn, task_state):
+    if task_state["timed_out"] or not task_timed_out(task_state):
+        return
+
+    task_state["timed_out"] = True
+    try:
+        ecs.stop_task(
+            cluster=CLUSTER,
+            task=task_arn,
+            reason=f"Task exceeded {TASK_TIMEOUT_SECONDS}-second timeout",
+        )
+        print(f"stopping timed-out task {task_arn}", flush=True)
+    except Exception as error:
+        print(f"could not stop timed-out task {task_arn}: {error}", flush=True)
+
+
+def completed_tasks(response, running):
+    visible = {task["taskArn"] for task in response.get("tasks", [])}
+    completed = []
+
+    for task in response.get("tasks", []):
+        task_arn = task["taskArn"]
+        task_state = running[task_arn]
+
+        # 1. Evaluate if it has overstayed its wall-clock lease boundary
+        if task_timed_out(task_state):
+            task_state["timed_out"] = True
+
+        # 2. Actively kill if it is still running past the deadline
+        if task.get("lastStatus") != "STOPPED":
+            stop_timed_out_task(task_arn, task_state)
+            continue
+
+        # 3. Retrospective Check: Dead container must pass execution validation AND timing thresholds
+        succeeded = task_succeeded(task) and not task_state["timed_out"]
+        completed.append((task_arn, succeeded))
+
+    # 4. Handle Ghost Mitigation: Clean up tasks that vanish entirely from AWS tracking responses
+    completed.extend((task_arn, False) for task_arn in set(running) - visible)
+    return completed
+
+
+def check_running_tasks(running):
+    response = ecs.describe_tasks(cluster=CLUSTER, tasks=list(running))
+    return completed_tasks(response, running)
+
+
+def finalize_tasks(completed, running):
+    for task_arn, succeeded in completed:
+        task_state = running[task_arn]
+        try:
+            finish_message(task_state["message"], succeeded)
+            del running[task_arn]
+            print(f"task {task_arn} {'succeeded' if succeeded else 'failed'}", flush=True)
+        except Exception as error:
+            print(f"could not finalize task {task_arn}: {error}", flush=True)
+
+
+def track_message(message, running):
+    body = json.loads(message["Body"])
+    claimed, task_arn = claim_message(message)
+    if claimed:
+        task_arn = start_task(message)
+        record_task(message, task_arn)
+    elif task_arn is None:
+        sqs.change_message_visibility(
+            QueueUrl=QUEUE_URL,
+            ReceiptHandle=message["ReceiptHandle"],
+            VisibilityTimeout=30,
+        )
+        return
+    # Fixed deadline configuration anchor set once at execution startup
+    running[task_arn] = {
+        "message": message,
+        "timed_out": False,
+        "deadline": time.time() + TASK_TIMEOUT_SECONDS,
+    }
+    print(
+        f"tracking task {task_arn}; delay_s={body.get('delay_s', 0)}; "
+        f"timeout={TASK_TIMEOUT_SECONDS}s",
+        flush=True,
+    )
+
+
+def start_available_tasks(running):
+    slots = MAX_TASKS - len(running)
+    for message in receive_messages(slots) if slots > 0 else []:
+        try:
+            track_message(message, running)
+        except Exception as error:
+            print(f"could not start task: {error}", flush=True)
+            finish_message(message, False)
+            release_message(message)
+
+
 def main():
     running = {}
-    print(f"monitor started for {TASK_DEFINITION}; max tasks={MAX_TASKS}", flush=True)
+    print(
+        f"monitor started for {TASK_DEFINITION}; max tasks={MAX_TASKS}; "
+        f"task timeout={TASK_TIMEOUT_SECONDS}s",
+        flush=True,
+    )
 
     while True:
-        completed = []
         if running:
-            response = ecs.describe_tasks(
-                cluster=CLUSTER,
-                tasks=list(running),
-            )
-            for task in response.get("tasks", []):
-                if task.get("lastStatus") == "STOPPED":
-                    completed.append((task["taskArn"], task_succeeded(task)))
-            for task_arn in set(running) - {task["taskArn"] for task in response.get("tasks", [])}:
-                completed.append((task_arn, False))
-
-        for task_arn, succeeded in completed:
-            message = running.pop(task_arn)
-            try:
-                finish_message(message, succeeded)
-                print(f"task {task_arn} {'succeeded' if succeeded else 'failed'}", flush=True)
-            except Exception as error:
-                print(f"could not finalize task {task_arn}: {error}", flush=True)
-
-        slots = MAX_TASKS - len(running)
-        if slots > 0:
-            for message in receive_messages(slots):
-                try:
-                    claimed, task_arn = claim_message(message)
-                    if claimed:
-                        task_arn = start_task(message)
-                        record_task(message, task_arn)
-                    elif task_arn is None:
-                        sqs.change_message_visibility(
-                            QueueUrl=QUEUE_URL,
-                            ReceiptHandle=message["ReceiptHandle"],
-                            VisibilityTimeout=30,
-                        )
-                        continue
-                    running[task_arn] = message
-                    print(f"tracking task {task_arn}", flush=True)
-                except Exception as error:
-                    print(f"could not start task: {error}", flush=True)
-                    finish_message(message, False)
-                    release_message(message)
-
+            finalize_tasks(check_running_tasks(running), running)
+        start_available_tasks(running)
         time.sleep(10)
 
 

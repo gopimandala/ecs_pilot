@@ -2,3 +2,13 @@ aws ecr get-login-password --region ap-south-1 \
   | docker login \
     --username AWS \
     --password-stdin 224350923820.dkr.ecr.ap-south-1.amazonaws.com
+
+# Start Redis and Tyk locally.
+docker compose -f docker-compose.tyk.yml up -d
+
+# Check that Redis and Tyk are running.
+docker compose -f docker-compose.tyk.yml ps
+
+# Stop Redis and Tyk.
+docker compose -f docker-compose.tyk.yml down
+

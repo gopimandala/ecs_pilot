@@ -23,10 +23,14 @@ data "aws_subnets" "default" {
 }
 
 locals {
-  main_api_image = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/main-api:latest"
-  uc1_image      = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc1:latest"
-  uc2_image      = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc2@sha256:7c18db0f7792c514aa426b450b4934dc16271a3eace181c4b2952bfb091a1611"
-  monitor_image  = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/monitor@sha256:c32d724f4982b758cb4ddbbdb3af06e70a7acc45a446eb0a1024f5843b7dbddf"
+  uc1_image_tag      = "1.2.1"
+  uc2_image_tag      = "1.2.1"
+  main_api_image_tag = "1.1.0"
+  monitor_image_tag  = "1.1.4"
+  main_api_image     = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/main-api:${local.main_api_image_tag}"
+  uc1_image          = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc1:${local.uc1_image_tag}"
+  uc2_image          = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc2:${local.uc2_image_tag}"
+  monitor_image      = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/monitor:${local.monitor_image_tag}"
 }
 
 resource "aws_cloudwatch_log_group" "ecs" {
@@ -36,16 +40,16 @@ resource "aws_cloudwatch_log_group" "ecs" {
 
 resource "aws_sqs_queue" "uc1_requests" {
   name                       = "gopi-uc1-requests"
-  visibility_timeout_seconds = 180
+  visibility_timeout_seconds = 300
   message_retention_seconds  = 1209600
-  receive_wait_time_seconds  = 10
+  receive_wait_time_seconds  = 20
 }
 
 resource "aws_sqs_queue" "uc2_requests" {
   name                       = "gopi-uc2-requests"
-  visibility_timeout_seconds = 180
+  visibility_timeout_seconds = 300
   message_retention_seconds  = 1209600
-  receive_wait_time_seconds  = 10
+  receive_wait_time_seconds  = 20
 }
 
 resource "aws_sqs_queue" "usecase_dlq" {
@@ -171,7 +175,7 @@ resource "aws_iam_policy" "monitor" {
       },
       {
         Effect   = "Allow"
-        Action   = ["ecs:RunTask", "ecs:DescribeTasks"]
+        Action   = ["ecs:RunTask", "ecs:DescribeTasks", "ecs:StopTask"]
         Resource = "*"
       },
       {
@@ -244,16 +248,18 @@ resource "aws_ecs_task_definition" "uc2" {
 resource "aws_ecs_task_definition" "monitor" {
   for_each = {
     uc1 = {
-      queue_url       = aws_sqs_queue.uc1_requests.url
-      task_definition = aws_ecs_task_definition.uc1.family
-      max_tasks       = "2"
-      log_prefix      = "uc1-monitor"
+      queue_url            = aws_sqs_queue.uc1_requests.url
+      task_definition      = aws_ecs_task_definition.uc1.family
+      max_tasks            = 2                     # Changed to numeric integer
+      task_timeout_seconds = 120                  
+      log_prefix           = "uc1-monitor"
     }
     uc2 = {
-      queue_url       = aws_sqs_queue.uc2_requests.url
-      task_definition = aws_ecs_task_definition.uc2.family
-      max_tasks       = "1"
-      log_prefix      = "uc2-monitor"
+      queue_url            = aws_sqs_queue.uc2_requests.url
+      task_definition      = aws_ecs_task_definition.uc2.family
+      max_tasks            = 1                     # Changed to numeric integer
+      task_timeout_seconds = 120                  
+      log_prefix           = "uc2-monitor"
     }
   }
 
@@ -274,8 +280,9 @@ resource "aws_ecs_task_definition" "monitor" {
       { name = "DLQ_URL", value = aws_sqs_queue.usecase_dlq.url },
       { name = "ECS_CLUSTER", value = aws_ecs_cluster.gopi_cluster.name },
       { name = "TASK_DEFINITION", value = each.value.task_definition },
-      { name = "MAX_TASKS", value = each.value.max_tasks },
+      { name = "MAX_TASKS", value = tostring(each.value.max_tasks) }, # Explicitly cast to string for ECS env specs
       { name = "MAX_ATTEMPTS", value = "2" },
+      { name = "TASK_TIMEOUT_SECONDS", value = tostring(each.value.task_timeout_seconds) }, # Explicitly cast to string for ECS env specs
       { name = "DEDUP_TABLE", value = aws_dynamodb_table.message_dedup.name },
       { name = "SUBNET_ID", value = data.aws_subnets.default.ids[0] },
       { name = "SECURITY_GROUP_ID", value = aws_security_group.ecs_sg.id }
@@ -290,6 +297,7 @@ resource "aws_ecs_task_definition" "monitor" {
     }
   }])
 }
+
 
 resource "aws_ecs_task_definition" "main_api" {
   family                   = "main-api-task"
