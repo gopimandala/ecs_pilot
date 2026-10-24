@@ -2,6 +2,7 @@ import json
 import os
 import time
 import boto3
+from health_endpoint import start_health_server
 
 REGION = os.getenv("AWS_REGION", "ap-south-1")
 QUEUE_URL = os.environ["QUEUE_URL"]
@@ -238,6 +239,8 @@ def start_available_tasks(running):
 
 def main():
     running = {}
+    last_heartbeat = [time.monotonic()]
+    start_health_server(lambda: time.monotonic() - last_heartbeat[0] < 60)
     print(
         f"monitor started for {TASK_DEFINITION}; max tasks={MAX_TASKS}; "
         f"task timeout={TASK_TIMEOUT_SECONDS}s",
@@ -248,6 +251,7 @@ def main():
         if running:
             finalize_tasks(check_running_tasks(running), running)
         start_available_tasks(running)
+        last_heartbeat[0] = time.monotonic()
         time.sleep(10)
 
 

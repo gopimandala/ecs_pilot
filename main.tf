@@ -23,10 +23,10 @@ data "aws_subnets" "default" {
 }
 
 locals {
-  uc1_image_tag      = "1.2.1"
-  uc2_image_tag      = "1.2.1"
-  main_api_image_tag = "1.1.0"
-  monitor_image_tag  = "1.2.1"
+  uc1_image_tag      = "1.2.2"
+  uc2_image_tag      = "1.2.2"
+  main_api_image_tag = "1.1.1"
+  monitor_image_tag  = "1.2.2"
   main_api_image     = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/main-api:${local.main_api_image_tag}"
   uc1_image          = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc1:${local.uc1_image_tag}"
   uc2_image          = "224350923820.dkr.ecr.ap-south-1.amazonaws.com/gopi/uc2:${local.uc2_image_tag}"
@@ -45,7 +45,7 @@ resource "aws_sqs_queue" "uc1_requests" {
   receive_wait_time_seconds  = 20
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.usecase_dlq.arn
-    maxReceiveCount     = 2  # This enforces: 1 Original Try + 1 Retry Max
+    maxReceiveCount     = 2 # This enforces: 1 Original Try + 1 Retry Max
   })
 }
 
@@ -54,6 +54,10 @@ resource "aws_sqs_queue" "uc2_requests" {
   visibility_timeout_seconds = 300
   message_retention_seconds  = 1209600
   receive_wait_time_seconds  = 20
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.usecase_dlq.arn
+    maxReceiveCount     = 2
+  })
 }
 
 resource "aws_sqs_queue" "usecase_dlq" {
@@ -214,6 +218,13 @@ resource "aws_ecs_task_definition" "uc1" {
     name      = "worker"
     image     = local.uc1_image
     essential = true
+    healthCheck = {
+      command     = ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval    = 10
+      timeout     = 3
+      retries     = 3
+      startPeriod = 5
+    }
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -238,6 +249,13 @@ resource "aws_ecs_task_definition" "uc2" {
     name      = "worker"
     image     = local.uc2_image
     essential = true
+    healthCheck = {
+      command     = ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval    = 10
+      timeout     = 3
+      retries     = 3
+      startPeriod = 5
+    }
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -254,15 +272,15 @@ resource "aws_ecs_task_definition" "monitor" {
     uc1 = {
       queue_url            = aws_sqs_queue.uc1_requests.url
       task_definition      = aws_ecs_task_definition.uc1.family
-      max_tasks            = 2                     # Changed to numeric integer
-      task_timeout_seconds = 120                  
+      max_tasks            = 2 # Changed to numeric integer
+      task_timeout_seconds = 120
       log_prefix           = "uc1-monitor"
     }
     uc2 = {
       queue_url            = aws_sqs_queue.uc2_requests.url
       task_definition      = aws_ecs_task_definition.uc2.family
-      max_tasks            = 1                     # Changed to numeric integer
-      task_timeout_seconds = 120                  
+      max_tasks            = 1 # Changed to numeric integer
+      task_timeout_seconds = 120
       log_prefix           = "uc2-monitor"
     }
   }
@@ -279,6 +297,13 @@ resource "aws_ecs_task_definition" "monitor" {
     name      = "monitor"
     image     = local.monitor_image
     essential = true
+    healthCheck = {
+      command     = ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)"]
+      interval    = 10
+      timeout     = 3
+      retries     = 3
+      startPeriod = 5
+    }
     environment = [
       { name = "QUEUE_URL", value = each.value.queue_url },
       { name = "DLQ_URL", value = aws_sqs_queue.usecase_dlq.url },
@@ -316,6 +341,13 @@ resource "aws_ecs_task_definition" "main_api" {
     name      = "main-api"
     image     = local.main_api_image
     essential = true
+    healthCheck = {
+      command     = ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval    = 10
+      timeout     = 3
+      retries     = 3
+      startPeriod = 5
+    }
     portMappings = [{
       containerPort = 8000
       hostPort      = 8000

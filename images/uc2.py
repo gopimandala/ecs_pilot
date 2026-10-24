@@ -3,6 +3,7 @@ import os
 import time
 import sys
 from multiprocessing import Process
+from health_endpoint import start_health_server
 
 
 def run_workload():
@@ -33,6 +34,7 @@ def main():
     # 2. Spawn your core workload inside an isolated child process context
     worker_process = Process(target=run_workload)
     worker_process.start()
+    start_health_server(worker_process.is_alive)
 
     # 3. Wait strictly up to the timeout limit for the worker process to complete
     worker_process.join(timeout=timeout_limit)

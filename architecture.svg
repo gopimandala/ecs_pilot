@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" role="img" aria-labelledby="title description">
+  <title id="title">Gopi AWS ECS architecture</title>
+  <desc id="description">Terraform architecture in ap-south-1 with a public Main API, separate UC1 and UC2 SQS queues, monitor services that launch Fargate workers, a shared dead-letter queue and DynamoDB deduplication table, and CloudWatch logging.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#596579"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#e87524"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#b84c45"/>
+    </marker>
+    <style>
+      text { font-family: Arial, Helvetica, sans-serif; fill: #253248; }
+      .title { font-size: 28px; font-weight: 700; }
+      .subtitle { font-size: 15px; fill: #627086; }
+      .boundary { fill: #f6f9fc; stroke: #385a7c; stroke-width: 2; }
+      .subnet { fill: #fff; fill-opacity: .64; stroke: #5e7896; stroke-width: 1.5; stroke-dasharray: 8 6; }
+      .card { fill: #fff; stroke: #9aa9ba; stroke-width: 1.4; }
+      .card-blue { fill: #eaf3fb; stroke: #3779ad; stroke-width: 1.6; }
+      .card-orange { fill: #fff1e6; stroke: #e87524; stroke-width: 1.6; }
+      .card-green { fill: #eaf6f0; stroke: #3d8a67; stroke-width: 1.6; }
+      .card-red { fill: #fff0ef; stroke: #b84c45; stroke-width: 1.6; }
+      .heading { font-size: 17px; font-weight: 700; }
+      .label { font-size: 14px; }
+      .small { font-size: 12px; fill: #526176; }
+      .tiny { font-size: 11px; fill: #526176; }
+      .badge { font-size: 12px; font-weight: 700; }
+      .flow { fill: none; stroke: #596579; stroke-width: 2; marker-end: url(#arrow); }
+      .flow-orange { fill: none; stroke: #e87524; stroke-width: 2.2; marker-end: url(#arrow-orange); }
+      .flow-red { fill: none; stroke: #b84c45; stroke-width: 1.8; stroke-dasharray: 7 5; marker-end: url(#arrow-red); }
+      .flow-dash { fill: none; stroke: #718096; stroke-width: 1.7; stroke-dasharray: 6 5; marker-end: url(#arrow); }
+      .flow-label { font-size: 11px; fill: #45556b; paint-order: stroke; stroke: #fff; stroke-width: 4px; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1100" fill="#fff"/>
+  <text x="60" y="48" class="title">Gopi | AWS ECS on-demand workloads</text>
+  <text x="60" y="74" class="subtitle">Architecture represented by main.tf · Region ap-south-1 · Default VPC, first discovered subnet</text>
+
+  <rect x="38" y="105" width="1524" height="955" rx="22" class="boundary"/>
+  <rect x="60" y="118" width="190" height="32" rx="16" fill="#385a7c"/>
+  <text x="78" y="140" fill="#fff" class="badge">AWS REGION · ap-south-1</text>
+
+  <g aria-label="External clients">
+    <circle cx="250" cy="184" r="16" fill="#7c8ca0"/>
+    <circle cx="280" cy="184" r="16" fill="#7c8ca0"/>
+    <path d="M226 215 Q226 197 250 197 Q274 197 274 215 V222 H226 Z" fill="#7c8ca0"/>
+    <path d="M256 215 Q256 197 280 197 Q304 197 304 215 V222 H256 Z" fill="#7c8ca0"/>
+    <text x="265" y="244" text-anchor="middle" class="heading">Users / clients</text>
+  </g>
+
+  <g aria-label="Amazon ECR images">
+    <rect x="1250" y="139" width="260" height="88" rx="12" class="card"/>
+    <rect x="1250" y="139" width="9" height="88" rx="4" fill="#8b5cf6"/>
+    <text x="1275" y="167" class="heading">Amazon ECR</text>
+    <text x="1275" y="190" class="small">main-api:1.1.1 · uc1:1.2.2</text>
+    <text x="1275" y="209" class="small">uc2:1.2.2 · monitor:1.2.2</text>
+    <text x="1380" y="244" text-anchor="middle" class="tiny">Existing repositories/images; not created here</text>
+  </g>
+
+  <rect x="78" y="267" width="1444" height="766" rx="16" fill="#edf4fa" stroke="#6384a4" stroke-width="1.6"/>
+  <text x="100" y="296" class="heading">Default VPC</text>
+  <text x="220" y="296" class="small">ECS tasks use first discovered subnet · public IP enabled · shared security group</text>
+  <rect x="101" y="316" width="1398" height="694" rx="14" class="subnet"/>
+  <text x="120" y="341" class="badge">ECS/FARGATE NETWORK · TCP 8000 ingress from 0.0.0.0/0 · outbound internet allowed</text>
+
+  <rect x="112" y="374" width="1368" height="570" rx="18" fill="#fff" stroke="#9aa9ba" stroke-width="1.4"/>
+  <rect x="130" y="358" width="196" height="32" rx="16" fill="#385a7c"/>
+  <text x="148" y="380" fill="#fff" class="badge">ECS CLUSTER · gopi-cluster</text>
+
+  <g aria-label="Main API service">
+    <rect x="145" y="438" width="278" height="154" rx="13" class="card-blue"/>
+    <rect x="145" y="438" width="278" height="36" rx="12" fill="#3779ad"/>
+    <path d="M145 462 H423 V474 H145 Z" fill="#3779ad"/>
+    <text x="165" y="462" fill="#fff" class="heading">Main API · ECS service</text>
+    <text x="165" y="500" class="label">main-api-service · desired count 1</text>
+    <text x="165" y="523" class="small">Fargate · 0.25 vCPU · 512 MB</text>
+    <text x="165" y="545" class="small">Container port 8000 · public IP</text>
+    <text x="165" y="568" class="small">Image: gopi/main-api:1.1.1</text>
+  </g>
+
+  <g aria-label="UC1 and UC2 SQS queues">
+    <rect x="520" y="415" width="255" height="124" rx="12" class="card-orange"/>
+    <rect x="520" y="415" width="255" height="31" rx="11" fill="#e87524"/>
+    <path d="M520 436 H775 V446 H520 Z" fill="#e87524"/>
+    <text x="539" y="437" fill="#fff" class="heading">Amazon SQS · UC1</text>
+    <text x="539" y="469" class="label">gopi-uc1-requests</text>
+    <text x="539" y="492" class="small">Receive wait 20s · visibility 300s</text>
+    <text x="539" y="515" class="small">Retention 14 days · redrive after 2 receives</text>
+
+    <rect x="520" y="650" width="255" height="124" rx="12" class="card-orange"/>
+    <rect x="520" y="650" width="255" height="31" rx="11" fill="#e87524"/>
+    <path d="M520 671 H775 V681 H520 Z" fill="#e87524"/>
+    <text x="539" y="672" fill="#fff" class="heading">Amazon SQS · UC2</text>
+    <text x="539" y="704" class="label">gopi-uc2-requests</text>
+    <text x="539" y="727" class="small">Receive wait 20s · visibility 300s</text>
+    <text x="539" y="750" class="small">Retention 14 days · redrive after 2 receives</text>
+  </g>
+
+  <g aria-label="UC1 monitor service and worker task">
+    <rect x="850" y="401" width="259" height="144" rx="12" class="card-green"/>
+    <rect x="850" y="401" width="259" height="32" rx="11" fill="#3d8a67"/>
+    <path d="M850 422 H1109 V433 H850 Z" fill="#3d8a67"/>
+    <text x="870" y="424" fill="#fff" class="heading">UC1 monitor service</text>
+    <text x="870" y="457" class="label">uc1-monitor-service · desired 1</text>
+    <text x="870" y="480" class="small">Polls UC1 queue · max workers 2</text>
+    <text x="870" y="503" class="small">MAX_ATTEMPTS=2 · timeout 120s</text>
+    <text x="870" y="526" class="small">Fargate · 0.25 vCPU · 512 MB</text>
+
+    <rect x="1173" y="401" width="270" height="144" rx="12" class="card-blue"/>
+    <text x="1193" y="430" class="heading">UC1 worker task</text>
+    <text x="1193" y="458" class="label">uc1-task-def · on demand</text>
+    <text x="1193" y="481" class="small">Fargate · 0.25 vCPU · 512 MB</text>
+    <text x="1193" y="504" class="small">Image: gopi/uc1:1.2.2</text>
+    <text x="1193" y="527" class="small">Up to 2 concurrent tasks</text>
+  </g>
+
+  <g aria-label="UC2 monitor service and worker task">
+    <rect x="850" y="636" width="259" height="144" rx="12" class="card-green"/>
+    <rect x="850" y="636" width="259" height="32" rx="11" fill="#3d8a67"/>
+    <path d="M850 657 H1109 V668 H850 Z" fill="#3d8a67"/>
+    <text x="870" y="659" fill="#fff" class="heading">UC2 monitor service</text>
+    <text x="870" y="692" class="label">uc2-monitor-service · desired 1</text>
+    <text x="870" y="715" class="small">Polls UC2 queue · max workers 1</text>
+    <text x="870" y="738" class="small">MAX_ATTEMPTS=2 · timeout 120s</text>
+    <text x="870" y="761" class="small">Fargate · 0.25 vCPU · 512 MB</text>
+
+    <rect x="1173" y="636" width="270" height="144" rx="12" class="card-blue"/>
+    <text x="1193" y="665" class="heading">UC2 worker task</text>
+    <text x="1193" y="693" class="label">uc2-task-def · on demand</text>
+    <text x="1193" y="716" class="small">Fargate · 0.25 vCPU · 512 MB</text>
+    <text x="1193" y="739" class="small">Image: gopi/uc2:1.2.2</text>
+    <text x="1193" y="762" class="small">Up to 1 concurrent task</text>
+  </g>
+
+  <g aria-label="Supporting AWS services">
+    <rect x="145" y="802" width="278" height="104" rx="12" class="card"/>
+    <text x="165" y="832" class="heading">IAM roles</text>
+    <text x="165" y="855" class="small">Execution role: image pull + log delivery</text>
+    <text x="165" y="877" class="small">Shared task role: SQS, DynamoDB, ECS RunTask</text>
+    <text x="165" y="897" class="tiny">PassRole for ECS execution and task roles</text>
+
+    <rect x="520" y="820" width="255" height="92" rx="12" class="card"/>
+    <rect x="520" y="820" width="9" height="92" rx="4" fill="#4b78a8"/>
+    <text x="543" y="850" class="heading">DynamoDB</text>
+    <text x="543" y="874" class="label">gopi-message-dedup</text>
+    <text x="543" y="895" class="small">On-demand · TTL on expires_at</text>
+
+    <rect x="850" y="820" width="259" height="92" rx="12" class="card-red"/>
+    <rect x="850" y="820" width="9" height="92" rx="4" fill="#b84c45"/>
+    <text x="873" y="850" class="heading">Shared dead-letter queue</text>
+    <text x="873" y="874" class="label">gopi-usecase-dlq</text>
+    <text x="873" y="895" class="small">UC1 and UC2 redrive target</text>
+
+    <rect x="1173" y="820" width="270" height="92" rx="12" class="card"/>
+    <rect x="1173" y="820" width="9" height="92" rx="4" fill="#7a64b5"/>
+    <text x="1196" y="850" class="heading">Amazon CloudWatch Logs</text>
+    <text x="1196" y="874" class="label">/ecs/gopi-logs · retention 1 day</text>
+    <text x="1196" y="895" class="small">Stream prefixes: api · uc1 · uc2 · monitors</text>
+  </g>
+
+  <path d="M265 222 V343 H284 V438" class="flow"/>
+  <text x="278" y="328" class="flow-label">HTTP to public task IP :8000</text>
+  <path d="M423 474 H520" class="flow-orange"/>
+  <text x="437" y="463" class="flow-label">SendMessage</text>
+  <path d="M423 554 H470 V712 H520" class="flow-orange"/>
+  <text x="438" y="645" class="flow-label">SendMessage</text>
+
+  <path d="M775 477 H850" class="flow"/>
+  <text x="782" y="466" class="flow-label">Receive / delete</text>
+  <path d="M775 712 H850" class="flow"/>
+  <text x="782" y="701" class="flow-label">Receive / delete</text>
+
+  <path d="M1109 473 H1173" class="flow-orange"/>
+  <text x="1115" y="462" class="flow-label">ECS RunTask</text>
+  <path d="M1109 708 H1173" class="flow-orange"/>
+  <text x="1115" y="697" class="flow-label">ECS RunTask</text>
+
+  <path d="M647 539 V620 H830 V866 H850" class="flow-red"/>
+  <text x="675" y="613" class="flow-label">Redrive after maxReceiveCount=2</text>
+  <path d="M647 774 V866 H850" class="flow-red"/>
+
+  <path d="M850 515 H810 V790 H748 V820" class="flow-dash"/>
+  <path d="M850 750 H810 V790 H748" class="flow-dash"/>
+  <text x="815" y="807" class="flow-label" transform="rotate(-90 815 807)">Deduplication checks/updates</text>
+
+  <path d="M423 555 H450 V785 H1285 V820" class="flow-dash"/>
+  <path d="M1285 545 V800 H1340 V820" class="flow-dash"/>
+  <path d="M1285 780 V820" class="flow-dash"/>
+  <text x="1090" y="798" class="flow-label">Container logs</text>
+
+  <path d="M1380 227 V330 H1308 V401" class="flow-dash"/>
+  <path d="M1435 227 V600 H1308 V636" class="flow-dash"/>
+  <text x="1401" y="315" class="flow-label" transform="rotate(90 1401 315)">Pull container images</text>
+
+  <g aria-label="Legend">
+    <line x1="120" y1="982" x2="165" y2="982" class="flow"/>
+    <text x="176" y="987" class="tiny">Request / queue interaction</text>
+    <line x1="370" y1="982" x2="415" y2="982" class="flow-orange"/>
+    <text x="426" y="987" class="tiny">Task dispatch</text>
+    <line x1="550" y1="982" x2="595" y2="982" class="flow-red"/>
+    <text x="606" y="987" class="tiny">SQS redrive</text>
+    <line x1="730" y1="982" x2="775" y2="982" class="flow-dash"/>
+    <text x="786" y="987" class="tiny">Supporting service / image / logging flow</text>
+    <text x="120" y="1018" class="tiny">All ECS services and run-task workers use Fargate in the selected default-VPC subnet with the same ECS security group.</text>
+  </g>
+</svg>

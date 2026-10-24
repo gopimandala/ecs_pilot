@@ -1,4 +1,4 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import boto3
 import os
@@ -15,6 +15,13 @@ UC2_SQS_QUEUE_URL = os.getenv("UC2_SQS_QUEUE_URL")
 class MainApiHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urlparse(self.path)
+        if parsed_path.path == '/health':
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"healthy"}')
+            return
+
         query = parse_qs(parsed_path.query)
 
         if parsed_path.path == '/usecase1':
@@ -75,6 +82,6 @@ class MainApiHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     server_address = ("", 8000)
-    httpd = HTTPServer(server_address, MainApiHandler)
+    httpd = ThreadingHTTPServer(server_address, MainApiHandler)
     print("ECS Main API Gateway running on port 8000...")
     httpd.serve_forever()

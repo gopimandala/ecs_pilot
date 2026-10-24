@@ -1,14 +1,14 @@
 # --- Image 1: uc1 ---
 FROM python:3.11-slim AS uc1
 WORKDIR /app
-COPY uc1.py .
+COPY uc1.py health_endpoint.py ./
 EXPOSE 8080
 CMD ["python", "-u", "uc1.py"]
 
 # --- Image 2: uc2 ---
 FROM python:3.11-slim AS uc2
 WORKDIR /app
-COPY uc2.py .
+COPY uc2.py health_endpoint.py ./
 EXPOSE 8080
 CMD ["python", "-u", "uc2.py"]
 
@@ -25,6 +25,6 @@ CMD ["python", "-u", "main_api.py"]
 FROM python:3.11-slim AS monitor
 WORKDIR /app
 RUN pip install --no-cache-dir boto3
-COPY monitor.py .
+COPY monitor.py health_endpoint.py ./
+EXPOSE 8080
 CMD ["python", "-u", "monitor.py"]
-

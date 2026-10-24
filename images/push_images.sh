@@ -4,10 +4,10 @@ set -Eeuo pipefail
 
 AWS_REGION="ap-south-1"
 AWS_REGISTRY="224350923820.dkr.ecr.${AWS_REGION}.amazonaws.com"
-UC1_IMAGE_TAG="1.2.1"
-UC2_IMAGE_TAG="1.2.1"
-MAIN_API_IMAGE_TAG="1.1.0"
-MONITOR_IMAGE_TAG="1.2.1"
+UC1_IMAGE_TAG="1.2.2"
+UC2_IMAGE_TAG="1.2.2"
+MAIN_API_IMAGE_TAG="1.1.1"
+MONITOR_IMAGE_TAG="1.2.2"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 TARGETS=("uc1" "uc2" "main_api" "monitor")
@@ -53,6 +53,13 @@ for i in "${!TARGETS[@]}"; do
 
     echo "Pushing ${ecr_image}..."
     docker push "$ecr_image"
+
+    echo "Verifying ${ecr_image} in ECR..."
+    aws ecr describe-images \
+        --repository-name "$repo_name" \
+        --image-ids "imageTag=${image_tag}" \
+        --region "$AWS_REGION" \
+        >/dev/null
 done
 
 echo "All images were built, tagged, and pushed successfully."
